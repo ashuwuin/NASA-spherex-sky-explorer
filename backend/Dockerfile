@@ -2,7 +2,9 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-RUN useradd -m -u 1000 user
+RUN useradd -m -u 1000 user \
+    && mkdir -p /home/user/.cache/spherex \
+    && chown -R user:user /home/user/.cache
 USER user
 ENV PATH="/home/user/.local/bin:${PATH}"
 ENV PORT=8000

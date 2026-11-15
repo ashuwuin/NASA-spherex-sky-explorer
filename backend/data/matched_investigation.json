@@ -1,0 +1,28 @@
+{
+  "id": "matched-infrared-field",
+  "ra": 269.4521,
+  "dec": 4.6934,
+  "fov_arcmin": 5,
+  "inputs": [
+    {
+      "id": "2026W12_1A_0610_4",
+      "url": "https://irsa.ipac.caltech.edu/ibe/data/spherex/dr1/level2/2026W12_1A/l2b-v27-2026-235/3/level2_2026W12_1A_0610_4D3_spx_l2b-v27-2026-235.fits",
+      "mjd": 61118.381516794,
+      "date": "2026-03-19T09:09:23.051",
+      "endDate": "2026-03-19T09:11:18.169",
+      "minUm": 1.6301,
+      "maxUm": 2.4346,
+      "fits_sha256": "e7adab7b0718dbfff665d78e2bf94315989e8cb7955fdee135e123b644fcd390"
+    },
+    {
+      "id": "2026W19_1A_0046_1",
+      "url": "https://irsa.ipac.caltech.edu/ibe/data/spherex/dr1/level2/2026W19_1A/l2b-v27-2026-245/3/level2_2026W19_1A_0046_1D3_spx_l2b-v27-2026-245.fits",
+      "mjd": 61164.133133576,
+      "date": "2026-05-04T03:11:42.741",
+      "endDate": "2026-05-04T03:13:37.859",
+      "minUm": 1.6301,
+      "maxUm": 2.4346,
+      "fits_sha256": "df487c95da4f50dfce4e841f9ddba9ef7901009d0e3afd698668126a27482da4"
+    }
+  ]
+}

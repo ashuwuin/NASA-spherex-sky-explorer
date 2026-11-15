@@ -14,6 +14,28 @@ def test_only_irsa_spherex_dr1_fits_urls():
         assert not valid_url(url)
 
 
+def test_bundled_investigation_preserves_verified_inputs_and_real_coverage():
+    import json
+    import spherex_archive as archive
+    frontend = json.loads(archive.BUNDLED_EVIDENCE.read_text())
+    records = archive.bundled_records(frontend['ra'], frontend['dec'])
+    assert [item['url'] for item in records] == [item['url'] for item in frontend['inputs']]
+    assert [item['date'] for item in records] == [item['date'] for item in frontend['inputs']]
+    assert archive.bundled_records(frontend['ra'] + .01, frontend['dec']) == []
+
+    preview = archive.bundled_preview(
+        records[0]['url'], frontend['ra'], frontend['dec'], frontend['fov_arcmin'])
+    pixels = np.asarray(preview['pixels'], dtype=float)
+    assert preview['previewAvailability'] == 'bundled-verified'
+    assert preview['fitsSha256'] == frontend['inputs'][0]['fits_sha256']
+    assert preview['unit'].replace(' ', '') == 'MJy/sr'
+    assert pixels.shape == (128, 128)
+    assert np.isfinite(pixels).sum() > 2_000
+    assert np.isnan(pixels).any()
+    assert archive.bundled_preview(
+        records[0]['url'], frontend['ra'] + .01, frontend['dec'], frontend['fov_arcmin']) is None
+
+
 def test_native_pixels_units_and_missing_values_preserved():
     image = fits.ImageHDU(np.array([[1., np.nan], [-2., 4.]]), name='IMAGE')
     image.header['BUNIT'] = 'MJy / sr'

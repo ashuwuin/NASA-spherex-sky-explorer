@@ -34,6 +34,24 @@ def test_coverage_moc_check():
         assert r2.json()["unwise_fallback_available"] is None
 
 
+def test_documented_spherex_field_loads_without_live_discovery():
+    with TestClient(app) as client:
+        records = client.get('/api/spherex/images', params={'ra': 269.4521, 'dec': 4.6934})
+        assert records.status_code == 200
+        payload = records.json()
+        assert payload['availability'] == 'bundled-verified'
+        assert [item['id'] for item in payload['images']] == [
+            '2026W12_1A_0610_4', '2026W19_1A_0046_1']
+
+        preview = client.get('/api/spherex/cutout', params={
+            'url': payload['images'][0]['url'], 'ra': 269.4521, 'dec': 4.6934, 'fov': 5})
+        assert preview.status_code == 200
+        result = preview.json()
+        assert result['previewAvailability'] == 'bundled-verified'
+        assert result['width'] == result['height'] == 128
+        assert result['cache_key']
+
+
 def test_resolve_all_formats_and_benchmarks():
     with TestClient(app) as tc:
         for name in ["Barnard's Star", "WISE 0855", "Epsilon Indi B", "RW Aurigae", "R Draconis"]:

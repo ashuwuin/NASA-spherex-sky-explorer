@@ -14,7 +14,7 @@
 
 <sub>AI-assisted mission illustration based on NASA/JPL-Caltech reference artwork · not telescope data · <a href="frontend/public/images/CREDITS.md">Image credits</a></sub>
 
-**[Get started](#run-locally) · [Architecture](#architecture) · [Data sources](#understand-the-data-first) · [Deploy](#production-deployment) · [Tests](#tests-and-verification)**
+**[Open the live project](https://classroom-flexibility-after-curious.trycloudflare.com/) · [Get started](#run-locally) · [Architecture](#architecture) · [Data sources](#understand-the-data-first) · [Deploy](#production-deployment) · [Tests](#tests-and-verification)**
 
 ![Astronomy](https://img.shields.io/badge/astronomy-132638?style=flat-square&labelColor=132638&color=132638)
 ![Infrared](https://img.shields.io/badge/infrared-D8B26E?style=flat-square&labelColor=132638)
@@ -60,7 +60,7 @@ The app combines several **distinct** data paths. Observations, illustrations, a
 | Scene Studio images | unWISE context images | Scene Studio is separate from the SPHEREx viewer. |
 | Fallback image frames | Explicit `Synthetic-Demo` generation after archive retrieval fails | Simulated, arbitrary signal; no telescope observation date |
 | SPHEREx dates and metadata | NASA/IPAC IRSA SIA2 discovery of DR1 spectral images at the requested coordinates | Separate observations, not the context image’s capture dates |
-| SPHEREx preview API | Real IRSA FITS cutouts on a common 128×128 TAN sky grid | Bilinear interpolation is not integrated-flux conserving; previews are enlarged for display. |
+| SPHEREx preview API | Real IRSA FITS cutouts on a common 128×128 TAN sky grid; the documented pair also has compact, hash-traced previews derived from its exact verified FITS inputs | Bilinear interpolation is not integrated-flux conserving; previews are enlarged for display. |
 | Main Explore spectrum | Measured SPHEREx native-pixel channels with ±1σ error bars | Streams accepted samples as they arrive; incomplete coverage and background glow remain. No chemical fit or teaching curve. |
 | Optional spectral-sample API | `/api/spherex/spectral-samples` | Real but partial native-pixel SPHEREx samples with ±1σ errors; available through the API, not the main graph |
 | Legacy explorer and learning spectra | Explicitly labeled generated teaching curves | Simulations, not telescope measurements |
@@ -190,8 +190,9 @@ Implementation: [`useSpherexFrames.js`](frontend/src/hooks/useSpherexFrames.js) 
 
 - **Discovery:** Explore queries DR1 for up to 300 date-sorted records, then downloads selected image previews. The hook selects up to three exposures with the same detector-wide wavelength range. The documented investigation pins two exact inputs. A shared detector range does not guarantee matching wavelengths at every pixel.
 - **Preview:** 128×128 common TAN grid with bilinear interpolation, enlarged for display. Source FITS retains the original quality, variance, and spectral-WCS extensions. These are not propagated into preview uncertainties.
-- **Caching:** discovery results for 10 minutes and previews for one hour, with bounded in-process caches and duplicate-request coalescing. The frontend retains a bounded recent-preview cache and loads selected exposures concurrently.
-- **Errors:** cutout downloads are limited to 32 MB. Missing coverage stays empty and archive failures remain errors. First-time retrieval still depends on IRSA availability and download speed.
+- **Caching:** successful discovery results, processed previews and measured channels persist under `SPHEREX_CACHE_DIR/archive-v1` in a bounded 256 MB cache. Discovery refreshes after one day and previews after 30 days; a saved result is returned immediately while an expired entry refreshes in the background. Errors never overwrite successful results. Previously retrieved native measurements retain their original source dates and incomplete coverage. The browser also keeps recent frames in memory for 10 minutes.
+- **Preset warming:** production Compose sets `SPHEREX_PREWARM=true` and prepares the five named targets in the background, retrying every five minutes. Run `python backend/warm_spherex_cache.py` manually to populate the same cache. First retrieval still requires a successful archive response. The Compose named volume `spherex-cache` preserves cached results across container replacement; other hosts must mount persistent storage at `SPHEREX_CACHE_DIR`.
+- **Errors:** cutout downloads are limited to 32 MB. Missing coverage stays empty and archive failures remain errors. The exact documented March/May investigation can use bundled, hash-traced previews derived from its verified SPHEREx FITS inputs when IRSA is unavailable; this is real-data resilience, not a simulated replacement. Other fields still depend on IRSA availability and download speed.
 - **Spectrum:** the optional Explore graph connects to `/api/spherex/spectral-samples` for measured native-pixel SPHEREx channels. It preserves source dates, units, passband widths and statistical uncertainties. Coverage is incomplete and foreground light remains. Reference markers do not identify chemicals. Teaching spectra remain separately labelled in Learn and Experiments.
 
 <a id="learning-design"></a>
@@ -330,6 +331,10 @@ Example pointing links:
 
 ## 🚀 Production deployment
 
+Current public demo: **[classroom-flexibility-after-curious.trycloudflare.com](https://classroom-flexibility-after-curious.trycloudflare.com/)**
+
+This `trycloudflare.com` address is a temporary tunnel and works only while its Oracle VM origin, Uvicorn backend, frontend server, and tunnel are running.
+
 ```bash
 docker compose up --build -d
 docker compose ps
@@ -348,7 +353,7 @@ flowchart LR
     Backend --> Archives[IRSA / unWISE / CDS]
 ```
 
-Configure HTTPS and service sizing on your hosting platform. Raster caches are disposable; jobs and archive caches are process-local. For multiple backend replicas, a shared job/cache design would be needed. Public archive latency and rate limits remain external dependencies.
+Configure HTTPS and service sizing on your hosting platform. Successful archive responses persist under `SPHEREX_CACHE_DIR`; the Compose setup stores them in the `spherex-cache` volume. Jobs remain process-local. Multiple backend replicas require shared job storage and a shared or replicated cache. Public archive latency and rate limits remain external dependencies.
 
 The Vercel SPA configuration alone does not deploy the Python backend or its API proxy; the combined Compose deployment is the complete included setup.
 
@@ -371,7 +376,7 @@ docker compose config --quiet
 
 The frontend uses Node’s built-in test runner and Vite-based in-memory rendering, with no new test framework. Coverage includes pointing validation, transport cancellation/polling, cache identity, missing pixels, scene settings, spectral model features, scroll mathematics, and actual page rendering. Backend tests cover API validation, mocked archive transport, FITS provenance/export, reprojection, and extraction/cache behavior.
 
-Latest local checks: **45 frontend tests passed**, **45 backend tests passed**, and the production frontend build passed. The emitted React/router and icon modules also loaded successfully in an import check. This records local verification; final public deployment and the five-beginner study still need their own checks, as tracked in [submission evidence](docs/submission-checks.md).
+Latest local checks: **45 frontend tests passed**, **50 backend tests passed**, and the production frontend build passed. The emitted React/router and icon modules also loaded successfully in an import check. This records local verification; final public deployment and the five-beginner study still need their own checks, as tracked in [submission evidence](docs/submission-checks.md). See [Oracle cache update instructions](docs/ORACLE_CACHE_UPDATE.md) to apply persistent caching to the deployed backend.
 
 GitHub Actions runs frontend tests/build, backend tests, and a production Docker Compose smoke check on pushes and pull requests. Local browser checks separately exercise key interactions, responsive layouts, and reduced-motion behavior. Automated passes do not establish astrophysical calibration, complete coverage, or continuous availability of external archives.
 

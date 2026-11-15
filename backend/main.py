@@ -2,6 +2,8 @@ import asyncio
 import io
 import re
 import uuid
+import os
+from contextlib import asynccontextmanager
 from typing import List, Optional
 
 import numpy as np
@@ -38,7 +40,21 @@ def validate_cache_key(key: str) -> str:
     return key
 
 
-app = FastAPI(title="SPHEREx Sky Explorer Proxy API", version="1.0.0")
+@asynccontextmanager
+async def lifespan(app):
+    task = None
+    if os.environ.get('SPHEREX_PREWARM', 'false').lower() == 'true':
+        from warm_spherex_cache import maintain_presets
+        task = asyncio.create_task(maintain_presets())
+    try:
+        yield
+    finally:
+        if task:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+
+app = FastAPI(title="SPHEREx Sky Explorer Proxy API", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -431,10 +447,18 @@ async def export_fits(cache_key: str):
     )
 
 # Isolated real-data endpoints: archive failures never become simulations.
-from spherex_archive import discover as discover_spherex, cutout as spherex_cutout
+from spherex_archive import bundled_records as bundled_spherex_records, discover as discover_spherex, cutout as spherex_cutout
 
 @app.get('/api/spherex/images')
 async def spherex_images(ra: float = Query(..., ge=0, le=360), dec: float = Query(..., ge=-90, le=90)):
+    bundled = bundled_spherex_records(ra, dec)
+    if bundled:
+        return {
+            'images': bundled,
+            'collection': 'spherex_dr1',
+            'source': 'Verified bundled previews from exact NASA/IPAC IRSA SPHEREx DR1 inputs',
+            'availability': 'bundled-verified',
+        }
     try:
         return {'images': await discover_spherex(ra, dec), 'collection': 'spherex_dr1', 'source': 'NASA/IPAC IRSA SIA2'}
     except Exception as exc:

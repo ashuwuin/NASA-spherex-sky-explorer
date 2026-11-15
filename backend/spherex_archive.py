@@ -1,16 +1,22 @@
 import asyncio
+import json
 import time
 from collections import OrderedDict
-from functools import wraps
+from functools import lru_cache, wraps
 from contextlib import AsyncExitStack
+from pathlib import Path
+import archive_cache
 
 
-def cached_archive(limit, ttl):
+def cached_archive(limit, ttl, persistent=None):
     """Bound successful results and coalesce concurrent identical archive requests."""
     def decorate(function):
         results, pending = OrderedDict(), {}
         @wraps(function)
         async def wrapped(*args):
+            disk = archive_cache.read(persistent, args) if persistent else None
+            if disk and disk[0] < ttl:
+                return disk[1]
             now = time.monotonic()
             if args in results:
                 saved, value = results[args]
@@ -22,6 +28,8 @@ def cached_archive(limit, ttl):
                 async def work():
                     try:
                         value = await function(*args)
+                        if persistent:
+                            archive_cache.write(persistent, args, value)
                         results[args] = (time.monotonic(), value)
                         while len(results) > limit:
                             results.popitem(last=False)
@@ -29,6 +37,11 @@ def cached_archive(limit, ttl):
                     finally:
                         pending.pop(args, None)
                 pending[args] = asyncio.create_task(work())
+            if disk:
+                # Serve previously successful observations immediately while
+                # refreshing discovery in the background. Never cache errors.
+                pending[args].add_done_callback(lambda task: task.exception() if not task.cancelled() else None)
+                return disk[1]
             return await asyncio.shield(pending[args])
         return wrapped
     return decorate
@@ -46,6 +59,62 @@ from scipy.ndimage import map_coordinates
 from wcs_pipeline import build_tan_wcs
 
 SIA = 'https://irsa.ipac.caltech.edu/SIA'
+BUNDLED_EVIDENCE = Path(__file__).with_name('data') / 'matched_investigation.json'
+BUNDLED_PREVIEWS = Path(__file__).with_name('data') / 'matched_investigation_previews.npz'
+
+
+@lru_cache(maxsize=1)
+def bundled_evidence():
+    """Metadata for the exact, hash-verified SPHEREx investigation inputs."""
+    return json.loads(BUNDLED_EVIDENCE.read_text())
+
+
+def bundled_records(ra, dec):
+    """Return recorded IRSA inputs only for the documented fixed sky field."""
+    evidence = bundled_evidence()
+    if abs(float(ra) - evidence['ra']) > 1e-5 or abs(float(dec) - evidence['dec']) > 1e-5:
+        return []
+    return [dict(item, previewAvailability='bundled-verified') for item in evidence['inputs']]
+
+
+def bundled_preview(url, ra, dec, fov):
+    """Load a compact real-data preview when IRSA is unavailable.
+
+    The arrays are exported from the exact FITS inputs named in the evidence file.
+    They retain missing coverage and spectral lookup values; they are not a
+    synthetic replacement or an independently calibrated data product.
+    """
+    evidence = bundled_evidence()
+    if (abs(float(ra) - evidence['ra']) > 1e-5
+            or abs(float(dec) - evidence['dec']) > 1e-5
+            or abs(float(fov) - evidence['fov_arcmin']) > 1e-5
+            or not BUNDLED_PREVIEWS.exists()):
+        return None
+    record = next((item for item in evidence['inputs'] if item['url'] == url), None)
+    if record is None:
+        return None
+    prefix = record['id']
+    with np.load(BUNDLED_PREVIEWS, allow_pickle=False) as archive:
+        pixels = np.asarray(archive[f'{prefix}__pixels'], dtype=float)
+        spectral = np.asarray(archive[f'{prefix}__spectral'], dtype=float)
+        wcs = str(archive[f'{prefix}__wcs'].item())
+        extensions = archive[f'{prefix}__extensions'].tolist()
+    return {
+        'pixels': np.where(np.isfinite(pixels), pixels, None).tolist(),
+        'spectral': np.where(np.isfinite(spectral), spectral, None).tolist(),
+        'qualityApplied': True,
+        'width': int(pixels.shape[1]),
+        'height': int(pixels.shape[0]),
+        'unit': 'MJy / sr',
+        'wcs': wcs,
+        'extensions': extensions,
+        'uncertainty': 'Statistical errors are not propagated through preview interpolation',
+        'processing': ('Bundled verified preview generated from the exact recorded SPHEREx DR1 FITS input. '
+                       '128 × 128 common north-up TAN grid; bilinear interpolation, not integrated-flux conserving. '
+                       'Missing coverage is preserved. Source URL, date and FITS SHA-256 remain in the evidence record.'),
+        'previewAvailability': 'bundled-verified',
+        'fitsSha256': record['fits_sha256'],
+    }
 
 
 def fill_isolated_nans(arr):
@@ -63,7 +132,7 @@ def fill_isolated_nans(arr):
     return out
 
 
-@cached_archive(64, 600)
+@cached_archive(64, 86400, persistent='discovery-dr1')
 async def discover(ra, dec):
     last_error = None
     for attempt in range(3):
@@ -137,10 +206,13 @@ def decode_image(content, ra=None, dec=None, fov=5):
         pixels = np.where(finite, data, None).tolist()
         return {'pixels': pixels, 'spectral': spectral, 'qualityApplied': quality_applied, 'width': data.shape[1], 'height': data.shape[0], 'unit': str(image.header.get('BUNIT', 'unknown')), 'wcs': image.header.tostring(sep='\n'), 'extensions': [h.name for h in hdus], 'uncertainty': 'Statistical errors are not propagated through preview interpolation', 'processing': processing + (' Quality flags and invalid variances masked.' if quality_applied else ' Quality assessment unavailable.')}
 
-@cached_archive(32, 3600)
+@cached_archive(32, 30 * 86400, persistent='preview-quality-v1')
 async def cutout(url, ra, dec, fov):
     if not valid_url(url):
         raise ValueError('Only SPHEREx DR1 spectral image URLs from IRSA are accepted.')
+    preview = bundled_preview(url, ra, dec, fov)
+    if preview is not None:
+        return preview
     content = await download_fits(url, ra, dec, (fov * 1.45) / 60)
     return await asyncio.to_thread(decode_image, content, ra, dec, fov)
 
@@ -214,6 +286,10 @@ _sample_results = OrderedDict()
 
 async def spectral_sample_updates(ra, dec):
     key = (ra, dec)
+    disk = archive_cache.read('spectral-native-v1', key)
+    if disk:
+        yield {**disk[1], 'cache': {'retrievedPreviously': True, 'ageSeconds': round(disk[0])}}
+        return
     hit = _sample_results.get(key)
     if hit and time.monotonic() - hit[0] < 600:
         yield hit[1]
@@ -250,6 +326,8 @@ async def spectral_sample_updates(ra, dec):
             if chosen and len(failures) == len(chosen):
                 raise RuntimeError('SPHEREx cutout requests failed. Retry shortly.')
             result = snapshot(True)
+            if not failures and result['samples']:
+                archive_cache.write('spectral-native-v1', key, result)
             _sample_results[key] = (time.monotonic(), result)
             _sample_results.move_to_end(key)
             while len(_sample_results) > 32:

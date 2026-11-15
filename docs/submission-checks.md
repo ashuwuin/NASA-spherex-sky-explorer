@@ -8,6 +8,8 @@ Open **Try a real investigation** in Explore, or use:
 `/explorer?source=spherex&ra=269.4521&dec=4.6934&fov=5&mode=side-by-side&name=Matched%20infrared%20field&investigation=matched-infrared-field`.
 The link pins two exact archive records; unavailable inputs are never silently replaced.
 
+For submission reliability, the repository also includes compact 128×128 previews derived from these exact hash-verified FITS inputs. Their source URLs, dates, units, missing coverage and evidence hashes remain attached. They are used only for this documented field and are not synthetic observations; other sky positions still require the live archive.
+
 | Input | UTC start (FITS) | Observation ID | Calibrated wavelength at field centre |
 | --- | --- | --- | --- |
 | A | 2026-03-19 09:09:23.051 | 2026W12_1A_0610_4 | 2.124950 µm |
